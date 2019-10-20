@@ -1,0 +1,297 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(data.table)
+library(vtreat)
+```
+
+
+#Add enrollment demographic to schools dataset
+```{r}
+
+#Join ct_school_dems with schools. 
+#Remember that ct_school_dems has multiple years and schools is a single year.
+metrics <- 
+  school_dems[school_dir,on=c("school_name","district_name")]
+
+cols <- c( "native_hawaiian_or_other_pacific_islander", 
+           "american_indian_or_alaska_native", 
+           "two_or_more_races", 
+           "black_or_african_american", 
+           "asian", 
+           "white",
+           "se_no",
+           "se_yes",
+           "lunch",
+           "esl_no",
+           "esl_yes",
+           "enroll",
+           "male",
+           "female")
+
+#Merge schools with ct_enroll with already merged schools/ct_school_dems
+metrics <- school_enroll[metrics,
+                         on=c("year",
+                              "district_name",
+                              "school_name")]
+
+
+#Set missing to mean
+#tomean <- names(metrics)[c(4:20)]
+#metrics[, (tomean) := lapply(tomean, function(x) {
+#    x <- get(x)
+#    x[is.na(x)] <- mean(x, na.rm = TRUE)
+#    round(x,digits=0)
+#}), .SDcols=tomean,
+#by = school_name]
+
+#Convert to demograhic count variable to percentage of enrollment
+for(j in c(11:19,21)){
+ set(metrics, i=NULL, j=j, value=metrics[[j]]/metrics[['total']])
+}
+
+#Aggregate minority and majority groups
+metrics[,`:=`(pct_min=sum(native_hawaiian_or_other_pacific_islander,
+                          american_indian_or_alaska_native,
+                          two_or_more_races,
+                          black_or_african_american,
+                          na.rm=TRUE)/enroll,
+              pct_maj=sum(asian,
+                          white,
+                          na.rm = TRUE)/enroll),
+                        by=.(school_name,year)][
+              ][,`:=`(unnac_race=1-pct_maj-pct_min,
+                      pct_female=female/sum(male,female,na.rm=TRUE)),
+                            by=.(school_name,year)]
+
+cols <-c("native_hawaiian_or_other_pacific_islander", 
+         "american_indian_or_alaska_native", 
+         "two_or_more_races", 
+         "black_or_african_american", 
+         "asian", 
+         "white",
+         "male",
+         "female")
+metrics[,(cols):=NULL]
+
+metrics <- metrics[year %in% as.character(2014:2017)]
+
+metrics[, lapply(.SD, uniqueN)][,melt(.SD)][order(-value)]
+metrics[, lapply(.SD, function(x) sum(is.na(x))/length(x))][,melt(.SD)][order(-value)]
+
+```
+
+
+# Aggregate school performance metrics with schools dataset to build metrics
+
+```{r}
+#c(1:14,21,87)
+metrics <- 
+  school_summary[school_name != "District"][
+    ][metrics,on=c("school_name","district_name","year")][
+      ][,town:=i.town][
+        ][teach,on=c("year","school_name","district_name")][
+          ][!is.na(school_org_type)][
+            ][,`:=`(st = enroll/tot_teach, 
+                  pct_teach=tot_teach/tot_staff,
+                  i.town=NULL)][
+              ][,type := ifelse(is_high==TRUE,
+                            "High",
+                           ifelse(is_middle==TRUE,
+                                    "Middle",
+                                    "Elem"))][ 
+                ][,test_score := fifelse(ind1ela_all_rate >0 &
+                                        ind1math_all_rate>0,
+                                 ind1ela_all_rate+ind1math_all_rate,
+                                 fifelse(ind1ela_all_rate>0,
+                                        ind1ela_all_rate,
+                                        fifelse(ind1math_all_rate>0,
+                                            ind1math_all_rate,NA_real_)))]
+
+#Cat district name to school name when the more than one school has same name
+metrics[school_name %in% metrics[,.N,by=.(year,school_name)][N>1,school_name],
+          school_name := str_c(str_remove(district_name," School District"), 
+                               school_name, sep="_")]
+
+#Left join town CAFR metrics to school/town
+metrics <- mfi_edu[metrics,on=c("town","year")]
+
+#Left join school cost per district and replace with muni CAFR if missing
+metrics <- school_fin[expense_type=="Total Expenditures"][
+  ][metrics,on=c("district_name","year")][
+    ][,school_cost:=ifelse(!is.na(school_cost),school_cost,education)]
+
+#Left join school demographics
+metrics <- 
+  school_dems[,.(school_name,
+                 dist_enroll=sum(total,na.rm=TRUE)),
+     by=.(district_name,year)][metrics,                                                              on=c("year","district_name","school_name")]
+
+#Add cost per student data from ctschoolfinance.org
+#town/year matches
+metrics<- school_cost[!is.na(town),-1][
+  ][metrics,on=c("year","town")]
+#town/district matches
+metrics<- school_cost[is.na(town),-4][
+  ][metrics,on=c("year","district_name")][
+    ][,cost_student:=fcoalesce(cost_student,i.cost_student)][
+      ][,i.cost_student:=NULL]
+
+#Override cost_student for charters
+metrics[is_charter==TRUE,cost_student:= school_cost/total]
+
+#metrics <- pct_eic[metrics,on=c("year","town")]
+
+num <- names(metrics)[which(sapply(metrics,is.numeric))]
+chr <- names(metrics)[which(sapply(metrics,is.character))]
+int  <- names(metrics)[which(sapply(metrics,is.integer))]
+num <- setdiff(num,int)
+setcolorder(metrics, c(chr,int,num))
+
+#tomean <- names(metrics)[num]
+#metrics[,ind11fitness_rate:=ind11fitness_rate*100][
+ # ][, (num) := lapply(num, function(metrics) {
+  #  metrics <- get(metrics)
+  #  metrics[is.na(metrics)] <- mean(metrics, na.rm = TRUE)
+  #  round(metrics,digits=5)
+#}), .SDcols=num,
+#by = school_name]
+
+cols <-c("year", 
+          "school_name",
+          "district_name",
+          "town",
+          "test_score",
+          "is_magnet", 
+          "is_charter", 
+          "is_regional", 
+          "is_correct",
+          "ind11fitness_rate",
+         "ind11participation_rate",
+          "district_size", 
+          "cost_student",
+          "egl_pop",
+          "lunch",
+          "se_yes",
+         "esl_yes",
+          "pct_min",
+          "unnac_race",
+          "pct_female",
+          "st",
+          "pct_teach",
+          "total",
+          "enrollmt",
+          "is_high",
+          "is_middle",
+          "is_elem",
+          "empl",
+          "tanf_pop",
+         "type")
+
+metrics[is.infinite(st) | is.nan(st) | st > 30 | st < 5]$st <- NA
+
+metrics[!is.na(test_score),..cols][, lapply(.SD, uniqueN)][,melt(.SD)][order(value)]
+metrics[!is.na(test_score),..cols][,lapply(.SD, function(x) sum(is.na(x))/.N)][,melt(.SD)][order(value,decreasing = TRUE)]
+metrics[!is.na(test_score),..cols][, lapply(.SD, function(x) sum(is.nan(x))/.N)][,melt(.SD)]
+metrics[!is.na(test_score),..cols][, lapply(.SD, function(x) sum(is.infinite(x))/.N)][,melt(.SD)]
+
+
+
+```
+
+# Fill missing for esl_yes and ind11fitness_rate with Vtreat
+
+```{r}
+varlist <- c("esl_yes","ind11fitness_rate","ind11participation_rate","lunch")
+
+treatment_plan <-
+  design_missingness_treatment(metrics[!is.na(test_score), ..cols], varlist = varlist)
+metrics_prep <-
+  prepare(treatment_plan, metrics[!is.na(test_score), ..cols])
+
+metrics_prep[, lapply(.SD, uniqueN), 
+             .SDcols = patterns(paste(cols, collapse ="|"))][
+               ][, melt(.SD)][order(value)]
+
+metrics_prep[, lapply(.SD, function(x) sum(is.na(x)) / .N), 
+             .SDcols = patterns(paste(cols, collapse = "|"))][
+               ][, melt(.SD)][order(value, decreasing = TRUE)]
+metrics_prep[, lapply(.SD, function(x) sum(is.nan(x)) / .N), 
+             .SDcols = patterns(paste(cols, collapse = "|"))][
+               ][, melt(.SD)]
+metrics_prep[, lapply(.SD, function(x) sum(is.infinite(x)) / .N), 
+             .SDcols = patterns(paste(cols, collapse = "|"))][
+               ][, melt(.SD)]
+
+
+#metrics_prep[,.SD,.SDcols=patterns(paste(cols,collapse="|"))]
+
+```
+
+
+```{r}
+
+parallel_cluster <- parallel::makeCluster(parallel::detectCores())
+
+#vars <- c("esl_yes","ind11fitness_rate","pct_eic","cost_student","free","st","egl_pop","enrollmt","empl","se_yes","pct_female","tanf_pop","total","pct_min","unnac_race")
+
+drops <- c("year","school_name","district_name","town","type")
+
+rgroup <- base::sample(c('train','test'),
+                       nrow(metrics_prep),
+                       prob=c(0.7,0.3),
+                       replace=TRUE)
+
+metrics_train <- 
+  metrics_prep[!is.na(test_score)][
+    ][,.SD,.SDcols=!drops][
+      ][rgroup=="train",,drop=FALSE]
+metrics_test <- 
+  metrics_prep[!is.na(test_score)][
+    ][,.SD,.SDcols=!drops][
+      ][rgroup=="test",,drop=FALSE]
+
+cross_frame_experiment <- vtreat::mkCrossFrameNExperiment(
+  metrics_train, 
+  varlist = names(metrics_train), 
+  outcomename = "test_score", 
+  verbose = FALSE,
+  parallelCluster = parallel_cluster)
+
+metrics_treated <- cross_frame_experiment$crossFrame
+treatment_plan <- cross_frame_experiment$treatments
+score_frame <- treatment_plan$scoreFrame
+
+#dTest_treated <- prepare(treatment_plan,
+                        
+# dTest,
+                     #    parallelCluster = parallel_cluster)
+
+metrics_test <- prepare(treatment_plan, metrics_test)
+```
+
+
+```{r}
+scale <- 
+  intersect(num,colnames(metrics[!is.na(test_score),..cols]))
+metrics <- 
+  metrics[!is.na(test_score),..cols][
+    ][, (scale):=lapply(.SD, function(x) as.vector(scale(x))),.SDcols=scale,by=c("type","year")]
+```
+
+
+
+```{r}
+outcome <- metrics_prep$test_score
+vars <- setdiff(colnames(metrics_prep[,-c(1:5,9,19)]),outcome)
+formula <- wrapr::mk_formula("test_score",vars)
+formula
+```
+
+
+
+

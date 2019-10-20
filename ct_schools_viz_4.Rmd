@@ -1,0 +1,126 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#library(tidyverse)
+library(data.table)
+library(plotly)
+library(ggbeeswarm)
+library(patchwork)
+```
+
+
+```{r}
+
+source("/Users/davidlucey/Desktop/David/Projects/CT_data/my_chart_attributes.R")
+```
+
+
+# Charters Beeswarm plot of Outcome Rate by Year
+
+```{r}
+
+p <- school_summary[school_dir, on=c("school_name")][
+  ][category=="SchoolTot" & outcome_rate_pct >0][
+    ][,.(outcome_rate_pct,school_name,district_name,distinction_category,is_charter,year)][
+      ][,ggplot(.SD,aes(x=as.integer(year), 
+                        y=outcome_rate_pct,
+                        label=school_name,
+                        label1=district_name,
+                        label2=distinction_category,
+                        color=as.logical(is_charter))) + 
+                  geom_quasirandom(cex=0.75) + 
+                  coord_flip() +
+                  ggtitle("Outcome Rate Percent All Schools -- Charters in Blue")+
+                  xlab("Year")+
+                  ylab("Outcome Rate Percent") + 
+                  mychartattributes]
+
+ggplotly(p, tooltip = c("Year", "outcome_rate_pct", "school_name","district_name","distinction_category","is_charter"))
+```
+
+# Charters Beeswarm plot of Outcome Rate by Year
+
+```{r}
+
+p <- school_summary[school_dir, on=c("school_name")][
+  ][category=="SchoolTot" & 
+      outcome_rate_pct >0 ][
+       ][,ggplot(.SD,aes(x=year, 
+                      y=outcome_rate_pct,
+                      label=school_name,
+                      label1=district_name,
+                      label2=distinction_category,
+                      color=as.logical(is_regional))) + 
+          geom_quasirandom(cex=0.75) + 
+          coord_flip() +
+          ggtitle("Outcome Rate Percent All Schools -- Regional in Blue")+
+          xlab("Year")+
+          ylab("Outcome Rate Percent") + 
+          mychartattributes]
+
+ggplotly(p, tooltip = c("fall_of_year", "outcome_rate_pct", "school_name","district_name","distinction_category","is_regional"))
+```
+
+
+##Summary stats on students taking tests
+
+```{r}
+#count number per annum taking test
+school_perf[student_group=="School"][
+  ][,.(ela_count=sum(as.numeric(ela_count),na.rm=TRUE)),
+      by=year]
+
+#Performance declines by grade level
+p <- school_perf[category=="Grade"][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+        by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=student_group))+
+              geom_line() +
+              xlab("Year")+
+              ylab("Math Test Scores")+
+              scale_x_continuous(breaks=c(2014:2017))+
+              theme_bw()+
+              theme(legend.position = 'bottom') ]
+
+p1 <- school_perf[category=="Grade"][
+  ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+        by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=student_group))+
+              geom_line() +
+              xlab("Year")+
+              ylab("Math Test Scores")+
+              scale_x_continuous(breaks=c(2014:2017))+
+              theme_bw()+
+              theme(legend.position = 'none')]
+
+p + p1 + plot_layout(ncol=2)
+
+#ggpubr::ggarrange(p, p1, ncol=2, common.legend = TRUE, legend="bottom")
+```
+
+
+```{r}
+library(radarBoxplot)
+
+cols=c("grp","free","pct_min","se_yes","test_score","esl_yes","ind11fitness_rate")
+cols=c("grp","cost_student","egl_pop","tanf_pop","empl","test_score","pct_teach")
+
+metrics_prep[,grp:=.GRP,by=c("is_elem","is_middle","is_high")]
+
+radarBoxplot(grp ~ ., data=metrics_prep[year=="2017",..cols][grp %in% c(3,4,2,5)],plot.median=T)
+
+
+```
+
+
+
+
+
+

@@ -1,0 +1,100 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(data.table)
+library(WVPlots)
+library(ggplot2)
+library(patchwork)
+```
+
+# Cols needed for graphs
+
+```{r}
+cols <- c("lunch","test_score","year","pct_min","se_yes","type")
+```
+
+# Hex plots of key explanatory vars vs test_score
+
+```{r}
+
+
+p1 <- HexBinPlot(metrics_prep[year=="2017",.SD,.SDcols=patterns(paste(cols,collapse="|"))], "lunch", "test_score", "Test Scores as a function of Free Lunch, Percent Minority & Special Ed") +
+  geom_smooth(color="black", se=FALSE, na.rm = TRUE)
+p2 <- HexBinPlot(metrics_prep[year=="2017" & pct_min <1], "pct_min", "test_score", "") 
+  geom_smooth(color="black", se=FALSE, na.rm = TRUE)
+p3 <- HexBinPlot(metrics_prep[year=="2017" & !is.na(test_score) & !is.na(se_yes)], "se_yes", "test_score", "") +
+  geom_smooth(color="black", se=FALSE, na.rm = TRUE)
+
+p1  + p2 + p3 + plot_layout(ncol = 1, widths=c(1,1,1), heights = c(3,3,3))
+
+
+```
+
+
+# Scatter Histograms of lunch vs test_score for Elementary, Middle and High schools
+
+```{r}
+
+unlist(lapply(list("Elem","Middle","High"),function(x) WVPlots::ScatterHist(
+  metrics_prep[type==x,.SD,.SDcols=patterns(paste(cols,collapse="|"))], "lunch", "test_score",
+  "Expected Test Score as function Free Lunch",
+  smoothmethod = "lm",
+  point_alpha = 0.025,
+  estimate_sig = TRUE)))
+```
+
+# Two variable scatter Histograms for free lunch vs pct_minority versus test_score by school type
+
+```{r}
+plot_data<- metrics_prep[year=="2017" & pct_min<1,.(lunch,pct_min,test_score,type)]
+plot_data <- plot_data[complete.cases(plot_data)]
+
+unlist(lapply(list("Elem","Middle","High"), function(x) WVPlots::ScatterHistN(plot_data[type==x], "lunch", "pct_min", "test_score", nclus=4, title="Combined Effect of Free Lunch and Minority Students on Test Score")))
+
+#ggplotly(p)
+
+```
+
+# Two variable scatter Histograms for cost_student vs student teacher ratio (st) versus test_score by school type
+
+```{r}
+plot_data <- metrics_prep[ cost_student<100000,.(cost_student,st,test_score,type)] 
+plot_data <- plot_data[complete.cases(plot_data)]
+
+unlist(lapply(list("Elem","Middle","High"), function(x) WVPlots::ScatterHistN(plot_data[type==x], "st", "cost_student", "test_score", nclus=4, title="Example Joint Distribution")))
+
+```
+
+
+```{r}
+plot_data <- metrics_prep[,.(is_charter,lunch,pct_min,test_score,type,grp=.GRP),by=c("is_elem","is_middle","is_high")]
+plot_data <- plot_data[complete.cases(is_charter)]
+
+unlist(lapply(list("Elem","Middle","High"),WVPlots::ScatterHistC(plot_data[x==type], xvar="lunch", yvar= "test_score", cvar="is_charter", title="Free Lunch vs Pct Minority with Charters shown in Red")))
+
+```
+
+
+# Shadow histogram of test_score by school type for 2017
+
+```{r}
+
+plot_data <- metrics_prep[year=="2017",.(is_charter,lunch,pct_min,test_score,type,grp=.GRP),by=c("is_elem","is_middle","is_high")]
+
+ShadowHist(plot_data[grp %in% c(2:4)], "test_score","grp",
+                         title = "Highest Scores in School Type")
+
+
+```
+
+
+
+```{r}
+WVPlots::ShadowPlot(metrics_prep,  "type", "is_charter",title = "Shadow plot of eye colors by sex")
+```
+
+

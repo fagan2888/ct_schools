@@ -1,0 +1,465 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r "setup", message=FALSE, include=FALSE, results='hide'}
+require("knitr")
+require("MarkdownReports")
+opts_knit$set(root.dir = "~/Desktop/David/Projects/ct_schools")
+```
+
+# Libraries
+
+```{r "libraries", echo=FALSE, message=FALSE, warning=FALSE}
+library(data.table)
+library(stringr)
+```
+
+# Load CT Municipal Financial Indicators since 2001
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ct_mfi <-
+  readRDS("/Users/davidlucey/Desktop/David/Projects/ct_muni/ct_mfi.RDS")
+
+#Build smaller data.table from ct_mfi of education attributes
+mfi_edu <- 
+  ct_mfi[fisc_year_end > 2001][
+    ][, .(
+          year = fisc_year_end,
+          municipality,
+          education,
+          enrollmt,
+          egl,
+          population = x_population,
+          tanf_recipients,
+          empl
+          )][
+            ][, `:=`(
+              town = str_to_title(as.character(municipality)),
+              year = as.character(year),
+              egl_pop = egl / (population - enrollmt),
+              tanf_pop = tanf_recipients / population
+            )][
+              ][, municipality := NULL]
+
+setcolorder(mfi_edu, c(1, 8, 2:7, 9:10))
+
+#Inspect
+mfi_edu[, lapply(.SD, uniqueN)][, melt(.SD)][][order(value)]
+mfi_edu[, lapply(.SD, function(x)
+  sum(is.na(x)) / .N)][][, melt(.SD)][order(-value)]
+
+rm(ct_mfi)
+
+```
+
+# Load IRS data and build percent earned income credit (pct_eic) variable
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+irs <- readRDS("/Users/davidlucey/Desktop/David/Projects/irs/irs.RDS")[state=="CT"]
+zips <- fread("~/Desktop/David/Projects/CT_data/ct_zips.csv")
+
+pct_eic <- 
+  irs[year %in% as.character(c(2014:2017)) & 
+      !zipcode %in% c("00000","99999") & state=="CT"][
+        ][,.(zip=zipcode,
+             year,
+             agi_level,
+             n59660,
+             n1,a59660)][
+          ][,(pc_eic=sum(n59660,na.rm=TRUE)/sum(n1,na.rm=TRUE)),
+              by=.(year,zip)][
+            ][zips[,zip:=zipcode::clean.zipcodes(zip)],
+                    on="zip"][
+              ][,.(year,town=str_to_title(municipality),V1)][
+                ][,.(pct_eic=sum(V1,na.rm=TRUE)),
+                     by=.(year,town)]
+
+pct_eic[, lapply(.SD, uniqueN)][,melt(.SD)][
+  ][order(value)]
+pct_eic[, lapply(.SD, function(x) sum(is.na(x))/.N)][
+  ][,melt(.SD)][order(-value)]
+
+rm(irs)
+```
+
+
+# Load all 1094 schools and engineer school type binary variables
+# Remove address, phone and convert "city" variable to "town"
+
+```{r "school_directory", echo=FALSE, message=FALSE, warning=FALSE}
+#List of schools in CT 
+school_dir <- fread("Education_Directory.csv")
+school_dir <- janitor::clean_names(school_dir)
+
+#school_dir <- 
+school_dir <- 
+  school_dir[,zipcode:=str_extract(zipcode,"^\\d{5}")][
+             ][zips[,.(city=str_to_title(municipality),
+                       zipcode=zipcode::clean.zipcodes(zip))],
+                                  on="zipcode"][
+               ][!is.na(school_name)]
+
+##Add features for kind of school by school & remove location attributes other than zip
+school_dir <- 
+  school_dir[organization_type != "Public School Districts"][
+        ][,interdistrict_magnet :=
+            as.integer(fifelse(!is.na(interdistrict_magnet),0,1))][
+          ][, `:=`(is_magnet = 
+                     as.integer(fifelse(str_detect(organization_type, "Magnet") | str_detect(school_name,"Magnet"),1L,0L)),
+                    is_regional = 
+                     as.integer(fifelse(str_detect(organization_type, "Region|Unified|Coop|Learn") | str_detect(school_name,"Region|Unified|Coop|Learn"),1L,0L)),
+                    is_charter = 
+                     as.integer(fifelse(organization_type=="Public Charter Schools",1,0)),
+                    is_correct=
+                     as.integer(str_detect(school_name,"Correct")),
+                    organization_code =NULL,
+                    address= NULL,
+                    phone=NULL,
+                    location=NULL,
+                    town=city)][
+                    ][,`:=`(is_pk=as.integer(fifelse(pre_kindergarten>0,1,0)),
+                            is_elem=as.integer(fifelse(grade_3>0,1,0)),
+                            is_middle=as.integer(fifelse(grade_8>0,1,0)),
+                            is_high=as.integer(fifelse(grade_10>0,1,0)),
+                            city=NULL
+                            )][
+                        ][,.SD,.SDcols=!patterns("grade_|kindergarten|organization|open")][
+                          ][, district_size := .N, by=district_name]
+
+school_type <- fread("specializedschoolreports.csv",
+                     skip = 3,
+                     select=c(1:2))
+names(school_type)[1:2] <- c("district_name","school_name")
+school_type$is_magnet_1 <-1L
+
+school_dir <- 
+  school_type[school_dir, 
+              on=c("district_name","school_name")][
+              ][,is_magnet_1 :=fifelse(!is.na(is_magnet_1),1,0)][
+                ][,is_magnet:=
+                    as.integer(fifelse((is_magnet==1 |interdistrict_magnet==1 |is_magnet_1==1),1,0))][
+                    ][,`:=`(is_magnet_1=NULL, interdistrict_magnet=NULL)]
+
+#Summary of unique levels and NA's
+school_dir[, lapply(.SD, uniqueN)][,melt(.SD)][order(value)] 
+school_dir[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][,melt(.SD)][order(-value) & value>0][,.(variable,format(value,scientific=FALSE))]
+
+```
+
+# Load schools summary data for all public schools and districts from 2014-2017
+# This data includes the full 12 metrics which are measured for each school system
+
+```{r "school_summary", echo=FALSE, message=FALSE, warning=FALSE}
+#Download all school summary data 2004-2017 into ct_schools data.table
+subdir <- "./school_edsight/"
+school_summary <- rbindlist(lapply(list.files(subdir,full.names = TRUE),fread))
+school_summary <- janitor::clean_names(school_summary)
+
+school_summary[,`:=`(year=as.character(fall_of_year),
+                     district_name=rptng_district_name)][
+                ][,`:=`(fall_of_year=NULL,
+                        rptng_district_name=NULL)]
+
+#drop code columns and add town of school
+school_summary <- school_summary[,.SD,.SDcols=!patterns("code")][
+  ][,town:= trimws(str_remove(str_remove(district_name,"School"),"District"))][
+    ][,year:=as.character(year)]
+
+#function to replace char class "."  with NA
+clean_dot <- function(x) {
+  x <- fifelse(x %in% c("", "."),NA_character_,x)
+  x
+}
+
+# use clean_dot formula with specified columns and convert those columns to NA
+cols <- names(school_summary)[which(str_detect(names(school_summary),"^ind|pct$|^final|^grad|flag$"))]
+school_summary <- 
+  school_summary[,(cols):=lapply(.SD,clean_dot), .SDcols=cols][
+      ][,(cols):=lapply(.SD,as.numeric),.SDcols=cols]
+
+# summary data about number of unique values and number of NA's in each data
+school_summary[, lapply(.SD, uniqueN)][,melt(.SD)][order(-value)] 
+school_summary[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][,melt(.SD)][order(-value)]
+
+```
+
+
+# Load school detailed performance data by group
+
+```{r "school_perf", echo=FALSE, message=FALSE, warning=FALSE}
+# Download detailed test data by school
+subdir <- "./school_performance/"
+school_perf <- rbindlist(lapply(list.files(subdir,
+                                               full.names = TRUE),
+                                    fread,
+                                    skip=7,
+                                    select=c(2,4:12)),
+                             use.names = TRUE,
+                             fill=TRUE,
+                             idcol="year")
+
+#Convert idcol to date
+school_perf[,year:=as.character(year+2013)]
+
+#school_perf <- school_perf 
+school_perf <- janitor::clean_names(school_perf)
+
+#Clean asterisk function 
+clean_asterisk <- function(x) {
+  x <- fifelse(x == "*",NA_character_,x)
+  x
+}
+
+#Convert "*" to NA on specified columns
+cols <- c(6:11)
+school_perf <- school_perf[,(cols):=lapply(.SD,clean_asterisk), .SDcols=cols]
+
+# summary data about number of unique values and number of NA's in each data
+school_perf[, lapply(.SD, uniqueN)][
+  ][,melt(.SD)][
+    ][order(value)] 
+school_perf[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][
+  ][,melt(.SD)][order(-value) & value>0][
+    ][,.(variable,format(value,scientific=FALSE))]
+
+school_perf
+```
+
+
+# Upload ct_enrollment data for all schools 2007-18
+# CT has 10% fewer students than 2007
+
+```{r "school_enroll", echo=FALSE, message=FALSE, warning=FALSE}
+#Load granulaar school enrollment data for 2007-2018 
+subdir <- "./school_enroll/"
+files <- gtools::mixedsort(list.files(subdir))
+school_enroll <- rbindlist(lapply(paste0(subdir,files), fread, na.strings=''), idcol = "year")[,-c(3,5)]
+
+#Convert idcol to date
+school_enroll[,year:=as.character(year+2006)]
+
+#Change names to match other datasets
+setnames(school_enroll,
+         old=c("year","District","School","Count"),
+         new=c("year","district_name","school_name","enroll"))
+
+#Roll down district name in spreadsheet and change "*" char to NA
+school_enroll[,2] <- lapply(school_enroll[,2], zoo::na.locf)
+
+#Set enroll var equal to * to NA
+school_enroll$enroll <- fifelse(school_enroll$enroll=="*",NA_character_,school_enroll$enroll)
+
+#Convert ct_enroll to numeric
+school_enroll$enroll <- as.numeric(school_enroll$enroll)
+
+#Total ct public school enrollment
+school_enroll[,sum(enroll,na.rm=TRUE),by=year]
+
+#Years filtered 2014-17
+school_enroll <- school_enroll[year %in% as.character(2014:2017)]
+
+#Summary of unique levels and NA's
+school_enroll[, lapply(.SD, uniqueN)][,melt(.SD)][order(value)] 
+school_enroll[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][,melt(.SD)][order(-value) & value>0][,.(variable,format(value,scientific=FALSE))]
+
+
+```
+
+
+# Upload and merge school demographic data over 4 categories (race, Special Ed, free lunch, ESL) from 015-2018 into single ct_schools_dems file
+```{r "school_demos", echo=FALSE, message=FALSE, warning=FALSE}
+
+##Function to take .csv datasets by year, rbind and clean "*" char to NA
+upload_school_data <- function(dataset) {
+  years <- c("2014","2015","2016","2017","2018")
+  string<- paste0("school_",dataset,"/",dataset,years,".csv")
+  x <- lapply(string,fread,na.strings="")
+  names(x) <- years
+  x <- rbindlist(x,idcol = TRUE)[,-c(3,5)]
+  #x[,2][x[,2] == ""] <- NA
+  x[,2] <- lapply(x[,2], zoo::na.locf)
+  x[,4:ncol(x)][x[,4:ncol(x)] == "*"] <- NA
+  return(x)
+}
+
+#Upload separate testing data by race, Special Ed, free lunch and ESL and merge into school_dems
+dataset <- c("race","SE","lunch","esl","gender")
+x <- lapply(dataset,upload_school_data)
+names(x) <- dataset
+names(x[[2]])[4:5] <- paste0("SE_",names(x[[2]])[4:5])
+names(x[[4]])[4:5] <- paste0("esl_",names(x[[4]])[4:5])
+
+#combine datasets from list of each type of data into ct_school_dems
+school_dems <- merge(x[[1]],x[[2]],by=c(".id","School","District"))
+school1_dems <- merge(x[[3]],x[[4]],by=c(".id","School","District"))
+school_dems <- merge(school_dems,school1_dems,by=c(".id","School","District"))
+school_dems <- merge(school_dems,x[[5]],by=c(".id","School","District"))
+school_dems <- school_dems[,.SD,.SDcols=!patterns(".x|.y")]
+school_dems[,4:ncol(school_dems)][school_dems[,4:ncol(school_dems)] == "0"] <- 0
+#school_dems[which(is.na(school_dems[,4:ncol(school_dems)])),4:ncol(school_dems)] <- "0"
+
+#Equalize names for joining
+school_dems <- janitor::clean_names(school_dems)
+names(school_dems)[1:3] <- c("year","school_name","district_name")
+
+#Convert Variables to numeric
+cols <- c(4:19)
+school_dems[, (cols):=lapply(.SD,as.numeric),.SDcols=cols]
+
+#Aggregate free and reduced price lunch
+school_dems <- 
+  school_dems[,lunch:=fcoalesce(free+reduced,total-non_subsidized)][
+    ][,`:=`(sub=NULL,sub1=NULL,lunch=fifelse(lunch>0,lunch,0))]
+
+#Summary of unique levels and NA's
+school_dems[year %in% as.character(2014:2017), lapply(.SD, uniqueN)][,melt(.SD)][order(value)] 
+school_dems[year %in% as.character(2014:2017), lapply(.SD, function(x) (sum(is.na(x)))/.N)][,melt(.SD)][order(-value) & value>0][,.(variable,format(value,scientific=FALSE))]
+
+#Raname data and clean global env
+rm(school1_dems)
+
+```
+
+
+
+##Teachers by School
+```{r "teachers", echo=FALSE, message=FALSE, warning=FALSE}
+teachers <- fread("FTEStaffing.csv",skip=3,na=".")
+teachers <- janitor::clean_names(teachers)
+teachers[,`:=`(school_name=school,
+                district_name=district)][
+          ][,`:=`(school=NULL,
+                  district=NULL)]
+
+teachers[,c(20:21)][teachers[,c(20:21)] ==""] <- NA
+teachers[,c(20:21)] <- lapply(teachers[,c(20:21)], zoo::na.locf)
+
+#teachers <- teachers[unique(schools[,.(school_name,town)]), on="school_name"]
+
+names(teachers)[3:18] <- str_extract(names(teachers)[3:18],"[[:digit:]]{4}")
+
+teach <- 
+  teachers[str_detect(assignment_category,"Teachers") & 
+           !str_detect(school_name, "-- District Level --"),-19][
+            ][,melt(.SD,
+                    id.vars=c("district_name","school_name"),
+                    measure.vars= c("2014","2015","2016","2017"),
+                    variable.name="year",
+                    value.name="teachers")][
+              ][,year:=as.character(year)][
+                ][,.(tot_teach=sum(teachers,na.rm=TRUE)),
+                    by=.(year,school_name,district_name)]
+
+staff <-  
+  teachers[!str_detect(school_name, "-- District Level --")][
+            ][,melt(.SD,
+                    id.vars=c("district_name","school_name"),
+                     measure.vars=c("2014","2015","2016","2017"),
+                            variable.name="year",
+                            value.name="staff")][
+                        ][,year:=as.character(year)][
+                          ][,.(tot_staff=sum(staff,na.rm=TRUE)),
+                                  by=.(year,school_name,district_name)]
+
+teach <- teach[staff, on=c("year","school_name","district_name")]
+
+teach[, lapply(.SD, uniqueN)][,melt(.SD)][order(value)] 
+teach[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][,melt(.SD)][order(-value) & value>0][,.(variable,format(value,scientific=FALSE))]
+
+rm(staff,teachers)
+```
+
+                
+
+#Edsight state funding is missing regional districts and Hartford-- NEEDS WORK
+
+```{r "school_expenses", echo=FALSE, message=FALSE, warning=FALSE}
+school_fin <- fread("FinanceComparison.csv",select=c(1:3,5,7))[-c(1:2),]
+names(school_fin) <- c("district_name","expense_type",c(2014:2016))
+
+#Roll down open space below district name in spreadsheet
+school_fin[,1][school_fin[,1] == ""] <- NA
+#ct_school_fin[,2:13][ct_school_fin[,2:13] == "N/A"] <- NA
+school_fin[,1] <- lapply(school_fin[,1], zoo::na.locf)
+
+#Convert columns to numeric
+cols=c(3:5)
+school_fin[,(cols) :=(lapply(.SD,as.numeric)),.SDcols=cols]
+
+#Impute missing 2017 as +3.5% 2016 spending by district
+school_fin[,`2017`:=round(`2016`*1.035,0),by=district_name]
+
+#Extract Total Expenditure and Teacher pay
+school_fin <- school_fin[expense_type %in% c("Total Expenditures","Instructional Staff and Services") ][
+              #&!str_detect(expense_type,"Family Academy District")][
+                ][,melt(.SD,
+                        id.vars=c("expense_type","district_name"),
+                        variable.name="year",
+                        value.name="school_cost")][
+                  ][year %in% c(2014:2017)]
+
+#Convert year var to chr to match other datasets
+school_fin$year <- as.character(school_fin$year)
+
+#Compare MFI to Edsight Total Expenditures report
+school_fin[expense_type=="Total Expenditures"][
+  ][,.(colSums(.SD,na.rm=TRUE),.N),.SDcols=c(4),year]
+mfi_edu[as.integer(year) %in% c(2014:2017)][
+                      ][,.(mfi=sum(education,na.rm=TRUE),.N),by=year]
+
+#Town percent funding by state
+school_fin[district_name=="Hartford School District" & 
+           expense_type == "Total Expenditures" & 
+           !str_detect(expense_type,"Family Academy District")][
+            ][,melt(.SD,id.vars=c("expense_type","district_name"))][,.(state= sum(value,na.rm=TRUE)),by=variable], mfi_edu[year %in% c(2005:2015) & town=="Hartford",.(mfi=sum(education)),by=year][order(year,decreasing=FALSE)])[,.(percent=mfi/state),by=year]
+
+#Missing districts including Hartford
+school_fin[ expense_type == "Total Expenditures" & 
+              !str_detect(expense_type,"Family Academy District"),
+              melt(.SD, id.vars=c("expense_type","district_name"))][is.na(value) & !str_detect(district_name,"Charter")]
+
+school_fin[,.(sum(school_cost,na.rm=TRUE),.N),by=year]
+```
+
+
+# Cost per student from ctschoolfinance.org
+
+```{r "school_cost", echo=FALSE, message=FALSE, warning=FALSE}
+school_cost <- readxl::read_excel("2016-17-2017-18-NCEP-Comparison.xlsx")
+school_cost <- janitor::clean_names(school_cost)
+school_cost <- as.data.table(school_cost[1:266,c(2:4)])
+
+school_cost1 <- readxl::read_excel("2014-15-2015-16-NCEP-Comparison.xlsx")
+school_cost1 <- janitor::clean_names(school_cost1)
+school_cost1 <- as.data.table(school_cost1)[1:166,c(2:4)]
+
+school_cost <- school_cost1[school_cost,on="district_name"][
+  ][,district_name:=str_to_title(district_name)]
+
+names(school_cost)[2:5] <- str_extract(names(school_cost)[2:5],"\\d{4}")
+
+cols <- names(school_cost)[str_detect(names(school_cost),"\\d{4}")]
+school_cost <- school_cost[, (cols):= lapply(.SD,as.numeric),.SDcols=cols]
+
+school_cost <-
+  school_cost[,melt(.SD,
+            id.vars="district_name",
+            measure.vars=c(2:5),
+            variable.name="year")][!is.na(district_name)& !str_detect(district_name,"Statewide")][
+        ][,`:=`(cost_student=round(as.numeric(value),digits=0),
+                district_name=ifelse(str_detect(district_name,"District"),
+                                     str_c("Regional School District ",
+                                           str_extract(district_name,"\\d{1,2}")),
+                                     district_name),
+                town=ifelse(!str_detect(district_name,"District"),
+                            district_name,
+                            NA))][
+             ][,-c("value")]
+
+school_cost
+rm(school_cost1)
+```
+
+

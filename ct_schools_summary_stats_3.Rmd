@@ -1,0 +1,113 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(DataExplorer)
+library(skimr)
+```
+
+
+#Summary data for ct_schools overall school "Outcome Rate" report card for all public schools in CT 
+
+Mean outcome rate has been declining in all categories but Charter. Regional School averages are above Charters, Magnet and broad average.
+
+```{r}
+
+## 202 School Districts had mean outcome rate decline from 77.8 to 73.8 over 4 years
+school_summary[school_name=="District"][
+            ][,.(mean(outcome_rate_pct,na.rm=TRUE),
+                 .N),
+                  by=year]
+
+# Average outcome rate and achievement gap all districts during 2017 in decreasing order
+school_summary[school_name=="District",
+           .( outcome_rate_pct=mean(outcome_rate_pct,na.rm=TRUE),
+              achievement_gap_flag=sum(achievement_gap_flag,na.rm = TRUE)),
+                by=district_name][
+                    ][order(-outcome_rate_pct)]
+
+#There are 24 public charters with average outcome rate of 64 which is below the broader average. The mean outcome rate for charter has risen over 4 years
+school_summary[school_org_type== "Public Charter Schools"][
+           ][,.(.N,
+                mean(outcome_rate_pct,na.rm=TRUE),
+                mean(achievement_gap_flag,na.rm=TRUE)),
+                          by=year]
+
+#72 schools have "Region" in name or are in a "Regional School District" 
+# with an average outcome rate 77 which has been declining 
+school_summary[(school_org_type== "Regional Schools" |
+              str_detect(district_name,"Region")) & 
+             school_name!="District"][
+                ][,.(.N,mean(outcome_rate_pct,na.rm=TRUE),
+                      mean(achievement_gap_flag,na.rm=TRUE)),
+                          by=year]
+
+#71 schools have "Magnet" in name with an average outcome rate of 66.8 slightly lower over 4 years
+school_summary[str_detect(school_name,"Magnet")][
+  ][,.(.N,
+       mean(outcome_rate_pct,na.rm=TRUE),
+       mean(achievement_gap_flag,na.rm=TRUE)),
+                  by=year]
+
+```
+
+
+#Table of summary mean test scores by year
+
+Total measured population is close to 900 schools. Mean test scores have increased slightly over the period from 2014-2017.
+
+```{r}
+
+#Add grp based on school type
+metrics_prep[,grp:=.GRP,by=c("is_elem","is_middle","is_high")]
+metrics_prep[,.(is_elem,is_middle,is_high,grp)]
+
+#Summary of grp and year based on test_score
+map=setdiff(names(metrics_prep),drops)
+cube(metrics_prep[grp %in% c(3,4,2,5)],
+     j=c(list(count=.N),lapply(.SD,mean,na.rm=TRUE)),
+     .SDcols="test_score",
+     by=c("grp","year"))
+
+```
+
+# Summary stats for charter vs non-charter by group
+
+```{r}
+cols=c("grp","year","pct_eic","cost_student","pct_female","free","egl_pop","tanf_pop","empl","pct_min","se_yes","st","test_score","pct_teach","total","dist_enroll","is_charter","is_magnet","is_regional")
+
+#all schools year and type for year 2017
+cube(metrics_prep[ year=="2017",.(grp,year,test_score,is_charter)],j=c(list(count=.N),mn=mean(test_score,na.rm=TRUE)),by=c("grp","is_charter","year"))[,dcast(.SD,grp+year~ is_charter,fun.aggregate=mean,value.var=c("mn","count"))]
+
+#Charter test_scores by year and type
+groupingsets(metrics_prep[grp %in% c(3,4,2,5),.(grp,year,test_score,is_charter,is_regional,is_magnet)],j=c(list(count=.N),mn=mean(test_score,na.rm=TRUE)),by=c("grp","year","is_charter"),sets=list("is_charter","grp"))[,dcast(.SD,grp~is_charter,value.var="mn")]
+
+```
+
+# Skimr summary
+
+```{r}
+
+skim_to_list(metrics_prep[,.SD,.SDcols=patterns(paste(cols,collapse="|"))])
+```
+
+
+# Data Explorer
+
+```{r}
+
+create_report(metrics_prep[,.SD,.SDcols=patterns(paste(cols,collapse="|"))],
+              y="test_score",
+              config = configure_report(
+              add_plot_prcomp = FALSE)
+  )
+
+
+```
+
+
+
+
