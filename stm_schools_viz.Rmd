@@ -1,0 +1,325 @@
+---
+title: "R Notebook"
+output: html_notebook
+
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+library(data.table)
+library(patchwork)
+library(ggplot2)
+library(knitr)
+library(DT)
+
+```
+
+# Available Test Counts and Indices for Stamford Public Schools by Student Group
+
+```{r 'data_table', message=FALSE, warning=FALSE, include=FALSE}
+
+dt <- datatable(school_perf[stringr::str_detect(district_name,"Stamford")][,.(year,school=school_name,student_grp=student_group,ela_count,ela_perf_idx=ela_performance_index,math_count,math_perf_idx=math_performance_index)],extensions = c("Buttons" , "FixedColumns"),
+           filter = 'top')
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+dt
+```
+
+
+# Stamford Elementary School Math Aggregated Test Scores Compared by Gender
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+school_perf[str_detect(district_name, "Stamford") &
+                        !str_detect(school_name,"High") &
+                        category== "Gender" & 
+                        !str_detect(school_name,"Middle"),
+         .(mean_ela=mean(as.numeric(ela_performance_index),na.rm=TRUE),
+                  mean_math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+         by=.(school_name,year,student_group)][
+  ,ggplot(.SD,aes(as.integer(year),mean_math,color=school_name)) +
+    geom_line() + 
+    ggtitle("Stamford Primary Math")+ 
+    ylab("Score") +  
+    xlab("Year") +
+    scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018)) +
+    facet_wrap(~student_group)+
+    theme(legend.position = 'topright')+
+    theme_bw()]
+
+```
+
+
+# Stamford Elementary School English Aggregated Test Scores Compared by Gender
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+school_perf[str_detect(district_name, "Stamford") &
+                       !str_detect(school_name,"High") & 
+                       category== "Gender" & 
+                       !str_detect(school_name,"Middle"),
+                     .(mean_ela=mean(as.numeric(ela_performance_index),na.rm=TRUE),
+                       mean_math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+                     by=.(school_name,year,student_group)][
+  ,ggplot(.SD,aes(as.integer(year),mean_ela,color=school_name)) +
+    geom_line() +
+    ggtitle("Stamford Primary English")+ 
+    ylab("Score") +
+    xlab("Year") + 
+    scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018)) +
+    facet_wrap(~student_group) +
+    theme(legend.position = "topright")+
+    theme_bw()]
+
+```
+
+# Stamford, Norwalk and Connecticut Averages (excluding Stamford and Norwalk) for Math by Grade
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Performance declines by grade level
+p <- school_perf[category=="Grade" & district_name=="Stamford School District"][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+        by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=student_group))+
+              geom_line()+ 
+              ggtitle("Stamford Math")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'none')]  
+
+p1 <- school_perf[category=="Grade" & district_name=="Norwalk School District"][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+        by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=student_group))+
+              geom_line()+ 
+              ggtitle("Norwalk Math")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'bottom')]  
+
+
+p2 <- school_perf[category=="Grade" & !district_name %in% c("Stamford School District", "Norwalk School District")][
+        ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+                by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=student_group)) + 
+              geom_line()+ 
+              ggtitle("Connecticut Math")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'none')] 
+
+p + p1 + p2 + plot_layout(ncol=3)  
+```
+
+# Stamford, Norwalk and Connecticut Averages (excluding Stamford and Norwalk) for English by Grade
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Performance declines by grade level
+p <- school_perf[category=="Grade" & district_name=="Stamford School District"][
+  ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+        by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=student_group))+
+              geom_line()+ 
+              ggtitle("Stamford English")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'none')] 
+
+p1 <- school_perf[category=="Grade" & district_name=="Norwalk School District"][
+        ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+                by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=student_group)) + 
+              geom_line()+ 
+              ggtitle("Norwalk English")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'bottom')] 
+
+p2 <- school_perf[category=="Grade"& !district_name %in% c("Stamford School District", "Norwalk School District")][
+        ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+                by=.(student_group,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=student_group)) + 
+              geom_line()+ 
+              ggtitle("Connecticut English")+ 
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks =  c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(45,70))+
+              theme_bw()+
+              theme(legend.position = 'none')] 
+
+p + p1 + p2 + plot_layout(ncol=3)  
+```
+
+
+# Trajectory of Math Scores for Grades 3, 4 and 5 in Stamford Elementary Schools
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+p <- school_perf[category=="Grade" & 
+                       student_group == "03" &
+                       str_detect(district_name,"Stamford")][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("3rd Grade Math")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw() +
+              theme(legend.position = 'none')]
+
+p1 <- school_perf[category=="Grade" & 
+                       student_group == "04" &
+                       str_detect(district_name,"Stamford")][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("4th Grade Math")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw()+
+              theme(legend.position = 'bottom')] 
+
+p2 <- school_perf[category=="Grade" & 
+                       student_group == "05" &
+                       str_detect(district_name,"Stamford")][
+  ][,.(math=mean(as.numeric(math_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            math,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("5th Grade Math")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw() +
+              theme(legend.position = 'none')] 
+
+p + p1 + p2 + plot_layout(ncol=3)
+```
+
+# Trajectory of English Scores for Grades 3, 4 and 5 in Stamford Elementary Schools Only
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+p <- school_perf[category=="Grade" & 
+                       student_group == "03" &
+                       str_detect(district_name,"Stamford")][
+  ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("3rd Grade English")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw() +
+              theme(legend.position = 'none')]
+
+p1 <- school_perf[category=="Grade" & 
+                       student_group == "04" &
+                       str_detect(district_name, "Stamford")][
+  ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("4th Grade English")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw()+
+              theme(legend.position = 'bottom')] 
+
+p2 <- school_perf[category=="Grade" & 
+                       student_group == "05" &
+                       str_detect(district_name, "Stamford")][
+  ][,.(english=mean(as.numeric(ela_performance_index),na.rm=TRUE)),
+          by=.(school_name,year)][
+          ][,ggplot(.SD,aes(as.integer(year),
+                            english,
+                            color=school_name))+
+              geom_line()+ 
+              ggtitle("5th Grade English")+
+              ylab("Score") + 
+              xlab("Year")+ 
+              scale_x_continuous(breaks = c(2014,2015,2016,2017,2018))+
+              scale_y_continuous(limits=c(60,80))+
+              theme_bw() +
+              theme(legend.position = 'none')] 
+
+p +p1 + p2 + plot_layout(ncol=3)
+```
+
+```{r}
+hn <- school_perf[str_detect(district_name, "Stamford") &
+                        !str_detect(school_name,"High") &
+                        !str_detect(school_name,"Middle") &
+                    student_group=="High Needs"]
+
+total <- school_perf[str_detect(district_name, "Stamford") &
+                        !str_detect(school_name,"High") &
+                        !str_detect(school_name,"Middle") &
+                       student_group=="School"]
+
+p <- hn[total, on = c("year","school_name")][, hn_ela:=as.numeric(ela_count)/as.numeric(i.ela_count)][,ggplot(.SD,aes(year,hn_ela,color=school_name,group=school_name))+geom_line() + ggtitle("English High Needs")+  ylab("Percentage") + 
+              xlab("Year")+ 
+              scale_x_discrete(breaks = c(2014,2015,2016,2017,2018))+
+              theme_bw() +
+              theme(legend.position = 'bottom')]
+
+p1 <- hn[total, on = c("year","school_name")][, hn_math:=as.numeric(math_count)/as.numeric(i.math_count)][,ggplot(.SD,aes(year,hn_math,color=school_name,group=school_name))+geom_line()+ ggtitle("Math High Needs")+  ylab("Percentage") + 
+              xlab("Year")+ 
+              scale_x_discrete(breaks = c(2014,2015,2016,2017,2018))+
+              theme_bw() +
+              theme(legend.position = 'none')]
+
+p +p1 + plot_layout(ncol=2)
+```
+
