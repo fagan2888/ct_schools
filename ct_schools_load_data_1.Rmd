@@ -247,7 +247,7 @@ school_perf <-
     subdir,
     full.names = TRUE),
     fread,
-    skip=7,
+    #skip=7,
     select=c(2,4:12)),
     use.names = TRUE,
     fill=TRUE,
@@ -278,6 +278,7 @@ school_perf[, lapply(.SD, uniqueN)][
 school_perf[, lapply(.SD, function(x) (sum(is.na(x)))/.N)][
   ][,melt(.SD)][order(-value) & value>0][
     ][,.(variable,format(value,scientific=FALSE))]
+
 
 ```
 
@@ -589,6 +590,7 @@ school_cost <-
                    str_extract(district_name,"\\d{1,2}")),
              district_name),
     town=ifelse(!str_detect(district_name,"District"),
+                district_name,
                 NA)
     )][
   ][,-c("value")]
